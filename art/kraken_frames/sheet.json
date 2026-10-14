@@ -1,0 +1,8 @@
+{
+  "erase": {
+    "anticipation": [[0.64, 0, 1, 0.11]]
+  },
+  "trim": {
+    "anticipation": { "end": 0.1 }
+  }
+}

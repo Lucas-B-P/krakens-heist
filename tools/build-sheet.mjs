@@ -13,19 +13,29 @@
 // O idle é mais lento (só pisca) para economizar memória; reações rápidas pedem mais quadros.
 // Animações que não cabem numa imagem de 4096px são divididas em várias páginas.
 //
-// --key remove o fundo: 'green' (chroma key), 'black' (vídeo com fundo preto) ou
-// 'none' (PNG já transparente). 'auto' detecta pela cor dos cantos de cada quadro.
-// --guide imagem.png: silhueta transparente com o mesmo enquadramento do vídeo (ex.: a
-// imagem usada para gerá-lo). Protege partes escuras do personagem no modo 'black'.
+// --key remove o fundo: 'auto' (padrão) mede a cor sólida do fundo em cada quadro, então
+// funciona com preto, verde ou um fundo que muda de cor no meio do vídeo. Também aceita
+// 'green' (chroma key clássico), 'black' ou 'none' (PNG já transparente).
+// --guide imagem.png: a imagem inicial usada para gerar os vídeos. Alinha o personagem
+// de todas as animações pelo primeiro quadro (mesmo tamanho e posição) e protege partes
+// escuras dele ao remover fundos pretos.
+//
+// <pasta>/sheet.json (opcional) guarda ajustes por animação:
+//   "erase": retângulos apagados, em coordenadas 0..1 (x0, y0, x1, y1) do vídeo, como
+//            a marca d'água de uma ferramenta de IA;
+//   "trim":  segundos descartados no início/fim (ex.: uma transição de fundo no final).
+//   { "erase": { "anticipation": [[0.64, 0, 1, 0.11]] },
+//     "trim":  { "anticipation": { "end": 0.1 } } }
+//
 // Todos os quadros recebem o MESMO recorte (a união de todos), para o personagem
 // não "tremer" entre um quadro e outro.
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import ffmpegPath from 'ffmpeg-static';
 import sharp from 'sharp';
-import { blackKey, chromaKey } from './chroma.mjs';
+import { chromaKey, colorKey, estimateBackground } from './chroma.mjs';
 
 const MAX_SIZE = 4096;
 const PAD = 2;
@@ -63,40 +73,131 @@ function fpsTable(spec) {
 
 const naturalSort = (a, b) => a.localeCompare(b, undefined, { numeric: true });
 
-function detectKey(data, width, height) {
-  const corners = [0, width - 1, (height - 1) * width, height * width - 1].map((p) => p * 4);
-  if (corners.every((i) => data[i + 3] < 128)) return 'none';
-  const avg = (c) => corners.reduce((s, i) => s + data[i + c], 0) / 4;
-  const [r, g, b] = [avg(0), avg(1), avg(2)];
-  if (g - Math.max(r, b) > 60) return 'green';
-  if (Math.max(r, g, b) < 40) return 'black';
-  return 'none';
+function backgroundLabel([r, g, b]) {
+  if (Math.max(r, g, b) < 30) return 'preto';
+  if (g - Math.max(r, b) > 15) return 'verde';
+  return 'cor sólida';
 }
 
-const guideCache = new Map();
-async function guideMask(file, width, height) {
-  const key = `${width}x${height}`;
-  if (!guideCache.has(key)) {
-    const alpha = await sharp(file).ensureAlpha().resize(width, height, { fit: 'fill' }).extractChannel(3).raw().toBuffer();
-    guideCache.set(key, Uint8Array.from(alpha, (a) => (a > 128 ? 1 : 0)));
+/** Pinta retângulos (coordenadas 0..1) com a cor do fundo, para sumirem junto com ele. */
+function paintRects(data, width, height, rects, [r, g, b]) {
+  for (const [x0, y0, x1, y1] of rects) {
+    const xa = Math.floor(x0 * width);
+    const xb = Math.ceil(x1 * width);
+    const ya = Math.floor(y0 * height);
+    const yb = Math.ceil(y1 * height);
+    for (let y = Math.max(0, ya); y < Math.min(height, yb); y++) {
+      for (let x = Math.max(0, xa); x < Math.min(width, xb); x++) {
+        const i = (y * width + x) * 4;
+        data[i] = r;
+        data[i + 1] = g;
+        data[i + 2] = b;
+      }
+    }
   }
-  return guideCache.get(key);
 }
 
-/** Lê o quadro, reduz para uma resolução de trabalho e remove o fundo. */
-async function loadFrame(file, workHeight, keyMode, guide) {
+/** Lê o quadro numa resolução de trabalho e remove o fundo. */
+async function loadFrame(file, workHeight, { keyMode, erase, protect }) {
   const { data, info } = await sharp(file)
     .ensureAlpha()
     .resize({ height: workHeight, withoutEnlargement: true })
     .raw()
     .toBuffer({ resolveWithObject: true });
-  const mode = keyMode === 'auto' ? detectKey(data, info.width, info.height) : keyMode;
-  if (mode === 'green') chromaKey(data);
-  else if (mode === 'black') {
-    const protect = guide ? await guideMask(guide, info.width, info.height) : null;
-    blackKey(data, info.width, info.height, { protect });
+  const { width, height } = info;
+
+  const opaque = [0, width - 1, (height - 1) * width, height * width - 1].some((p) => data[p * 4 + 3] > 128);
+  let label = 'transparente';
+  if (keyMode === 'green') {
+    chromaKey(data);
+    label = 'verde';
+  } else if (keyMode !== 'none' && opaque) {
+    const bg = keyMode === 'black' ? [0, 0, 0] : estimateBackground(data, width, height);
+    if (erase?.length) paintRects(data, width, height, erase, bg);
+    colorKey(data, width, height, { bg, protect: protect?.width === width ? protect.mask : null });
+    label = backgroundLabel(bg);
   }
-  return { data, width: info.width, height: info.height, mode };
+  return { data, width, height, label };
+}
+
+/**
+ * Silhueta da imagem-guia na resolução de trabalho, com margem em volta: o que sai da
+ * pose original (pérola jogada, moedas voando) não pode ser cortado no alinhamento.
+ * A margem vazia some depois, no recorte comum.
+ */
+async function loadGuide(file, workHeight) {
+  const marginX = Math.round(workHeight * 0.25);
+  const marginTop = Math.round(workHeight * 0.25);
+  const marginBottom = Math.round(workHeight * 0.1);
+  const { data, info } = await sharp(file)
+    .ensureAlpha()
+    .resize({ height: workHeight })
+    .extend({
+      left: marginX,
+      right: marginX,
+      top: marginTop,
+      bottom: marginBottom,
+      background: { r: 0, g: 0, b: 0, alpha: 0 },
+    })
+    .extractChannel(3)
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const mask = Uint8Array.from(data, (a) => (a > 128 ? 1 : 0));
+  const rgba = { data: Buffer.alloc(mask.length * 4), width: info.width, height: info.height };
+  mask.forEach((m, p) => (rgba.data[p * 4 + 3] = m ? 255 : 0));
+  return { mask, width: info.width, height: info.height, bounds: alphaBounds(rgba) };
+}
+
+/**
+ * Cada vídeo pode enquadrar o personagem de um jeito (mais zoom, mais margem). O primeiro
+ * quadro de cada animação é a imagem inicial usada na IA, então alinhá-lo à guia deixa o
+ * personagem com o mesmo tamanho e posição em todas as animações.
+ */
+function alignmentTo(guide, first) {
+  const f = alphaBounds(first);
+  const g = guide.bounds;
+  const scale = (g.y1 - g.y0 + 1) / (f.y1 - f.y0 + 1);
+  return {
+    scale,
+    offsetX: (g.x0 + g.x1) / 2 - ((f.x0 + f.x1) / 2) * scale,
+    offsetY: g.y0 - f.y0 * scale,
+  };
+}
+
+/** Silhueta da guia levada para o espaço do quadro original (inverso do alinhamento). */
+function guideInFrame(guide, align, width, height) {
+  const mask = new Uint8Array(width * height);
+  for (let y = 0; y < height; y++) {
+    const gy = Math.round(y * align.scale + align.offsetY);
+    if (gy < 0 || gy >= guide.height) continue;
+    for (let x = 0; x < width; x++) {
+      const gx = Math.round(x * align.scale + align.offsetX);
+      if (gx >= 0 && gx < guide.width) mask[y * width + x] = guide.mask[gy * guide.width + gx];
+    }
+  }
+  return { mask, width };
+}
+
+/** Reposiciona o quadro já recortado no espaço da guia. */
+async function applyAlignment(frame, align, guide) {
+  const w = Math.max(1, Math.round(frame.width * align.scale));
+  const h = Math.max(1, Math.round(frame.height * align.scale));
+  const scaled = await sharp(frame.data, { raw: { width: frame.width, height: frame.height, channels: 4 } })
+    .resize(w, h, { fit: 'fill' })
+    .raw()
+    .toBuffer();
+  const out = Buffer.alloc(guide.width * guide.height * 4);
+  const ox = Math.round(align.offsetX);
+  const oy = Math.round(align.offsetY);
+  for (let y = 0; y < h; y++) {
+    const ty = y + oy;
+    if (ty < 0 || ty >= guide.height) continue;
+    const x0 = Math.max(0, -ox);
+    const x1 = Math.min(w, guide.width - ox);
+    if (x1 <= x0) continue;
+    scaled.copy(out, (ty * guide.width + x0 + ox) * 4, (y * w + x0) * 4, (y * w + x1) * 4);
+  }
+  return { data: out, width: guide.width, height: guide.height };
 }
 
 async function extractVideo(file, fps, tmp) {
@@ -104,6 +205,15 @@ async function extractVideo(file, fps, tmp) {
   await mkdir(dir, { recursive: true });
   execFileSync(ffmpegPath, ['-hide_banner', '-loglevel', 'error', '-i', file, '-vf', `fps=${fps}`, path.join(dir, '%04d.png')]);
   return (await readdir(dir)).sort(naturalSort).map((f) => path.join(dir, f));
+}
+
+async function readSettings(file) {
+  try {
+    return JSON.parse(await readFile(file, 'utf8'));
+  } catch (err) {
+    if (err.code === 'ENOENT') return {};
+    throw new Error(`Erro lendo ${file}: ${err.message}`);
+  }
 }
 
 function alphaBounds({ data, width, height }) {
@@ -129,6 +239,10 @@ const fpsFor = fpsTable(opts.fps);
 const tmp = await mkdtemp(path.join(tmpdir(), 'kraken-sheet-'));
 const entries = (await readdir(opts.in, { withFileTypes: true })).sort((a, b) => naturalSort(a.name, b.name));
 
+const workHeight = Math.round(opts.height * 1.3);
+const guide = opts.guide ? await loadGuide(opts.guide, workHeight) : null;
+const settings = await readSettings(path.join(opts.in, 'sheet.json'));
+
 const raw = [];
 const animations = {};
 try {
@@ -147,18 +261,37 @@ try {
     } else {
       continue;
     }
+    const trim = settings.trim?.[anim];
+    if (trim) {
+      const fps = fpsFor(anim);
+      files = files.slice(Math.round((trim.start ?? 0) * fps), files.length - Math.round((trim.end ?? 0) * fps));
+    }
     if (!files.length) continue;
 
+    const erase = settings.erase?.[anim] ?? [];
+    const frameOpts = { keyMode: opts.key, erase };
+
+    let align = null;
+    let protect = null;
+    if (guide) {
+      const first = await loadFrame(files[0], workHeight, frameOpts);
+      align = alignmentTo(guide, first);
+      protect = guideInFrame(guide, align, first.width, first.height);
+    }
+
     animations[anim] = [];
-    const modes = new Set();
+    const labels = new Set();
     for (const [i, file] of files.entries()) {
       const name = `${anim}_${String(i).padStart(3, '0')}`;
-      const frame = await loadFrame(file, Math.round(opts.height * 1.3), opts.key, opts.guide);
-      modes.add(frame.mode);
+      let frame = await loadFrame(file, workHeight, { ...frameOpts, protect });
+      labels.add(frame.label);
+      if (align) frame = await applyAlignment(frame, align, guide);
       raw.push({ name, ...frame });
       animations[anim].push(name);
     }
-    console.log(`✓ ${anim}: ${files.length} quadros (fundo: ${[...modes].join('/')})`);
+    const scaleInfo = align ? `, escala ${align.scale.toFixed(2)}` : '';
+    const eraseInfo = erase.length ? `, ${erase.length} área(s) apagada(s)` : '';
+    console.log(`✓ ${anim}: ${files.length} quadros (fundo: ${[...labels].join('/')}${scaleInfo}${eraseInfo})`);
   }
 } finally {
   await rm(tmp, { recursive: true, force: true });
@@ -169,7 +302,8 @@ if (!raw.length) {
   process.exit(1);
 }
 
-// O recorte comum só faz sentido se todas as animações tiverem o mesmo enquadramento.
+// Sem guia não há como alinhar: o recorte comum só funciona se todas as animações
+// tiverem o mesmo enquadramento.
 const sizes = new Map();
 for (const f of raw) {
   const anim = f.name.replace(/_\d+$/, '');
@@ -178,7 +312,7 @@ for (const f of raw) {
 if (new Set(sizes.values()).size > 1) {
   console.error('As animações têm proporções diferentes e o personagem ficaria em tamanhos diferentes:');
   for (const [anim, size] of sizes) console.error(`  ${anim}: ${size}`);
-  console.error('Gere todos os vídeos com a mesma proporção (ex.: 3:4) a partir da mesma imagem inicial.');
+  console.error('Use --guide com a imagem inicial ou gere todos os vídeos com a mesma proporção.');
   process.exit(1);
 }
 
