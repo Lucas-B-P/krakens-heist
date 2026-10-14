@@ -1,5 +1,6 @@
 import { Container, FillGradient, Graphics, Text } from 'pixi.js';
 import gsap from 'gsap';
+import { sfx } from '../audio/Sfx.js';
 import { plainStyle } from '../util/fx.js';
 
 export function bindPress(target, onClick) {
@@ -10,7 +11,10 @@ export function bindPress(target, onClick) {
   target.on('pointerout', () => to(1));
   target.on('pointerdown', () => to(0.92));
   target.on('pointerup', () => to(1.06));
-  target.on('pointertap', () => onClick?.());
+  target.on('pointertap', () => {
+    sfx.click();
+    onClick?.();
+  });
 }
 
 export class Button extends Container {

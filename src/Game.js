@@ -1,8 +1,9 @@
-import { Container, Sprite, Text } from 'pixi.js';
+import { Container, Graphics, Sprite, Text } from 'pixi.js';
 import gsap from 'gsap';
 import { BET_LEVELS, BIG_WIN_TIERS, RETRIGGER_SPINS } from './game/config.js';
 import { evaluate, spinGrid } from './game/SlotMath.js';
 import { Wallet } from './game/Wallet.js';
+import { sfx } from './audio/Sfx.js';
 import { ParticleSystem } from './util/ParticleSystem.js';
 import {
   makeBubbleTexture,
@@ -201,6 +202,7 @@ export class Game {
   toggleMute() {
     if (!this.music) return;
     this.music.setMuted(!this.music.muted);
+    sfx.setMuted(this.music.muted);
     if (!this.music.muted && this.track && !this.track.playing && this.started) this.track.play();
     this.hud.setMuted(this.music.muted);
     this.settings.refresh();
@@ -247,7 +249,7 @@ export class Game {
 
     const result = await this.#spinOnce(0);
     await this.#present(result);
-    if (result.freeSpins > 0) await this.#runFreeSpins(result.freeSpins);
+    if (result.freeSpins > 0) await this.#runFreeSpins(result.freeSpins, result.scatters);
 
     this.busy = false;
     this.hud.setLocked(false);
@@ -270,18 +272,33 @@ export class Game {
     const result = evaluate(spinGrid(), this.bet, carriedMultiplier);
 
     this.hud.setSpinning(true);
+    this.scattersLanded = 0;
+    sfx.spinStart();
     await this.reels.spin(result.grid, {
       turbo: this.turbo,
       slam: () => this.slamRequested,
       onReelStop: (i, column, symbols) => this.#onReelStop(i, column, symbols),
-      onAnticipation: (on) => this.kraken.setAnticipation(on),
+      onAnticipation: (on) => {
+        this.kraken.setAnticipation(on);
+        sfx.anticipation(on);
+        if (on) this.kraken.say('tease');
+      },
     });
+    sfx.spinStop();
     this.hud.setSpinning(false);
     this.skipRequested = false;
     return result;
   }
 
   #onReelStop(reel, column, symbols) {
+    sfx.reelStop(reel);
+    const scatters = column.filter((c) => c.id === 'scatter').length;
+    if (scatters) {
+      const before = this.scattersLanded;
+      this.scattersLanded += scatters;
+      sfx.scatterLand(this.scattersLanded);
+      if (before < 3 && this.scattersLanded >= 3) this.kraken.say('scatter');
+    }
     column.forEach((cell, row) => {
       if (cell.id !== 'scatter' && cell.id !== 'bubble') return;
       const p = this.#cellCenter(reel, row);
@@ -309,13 +326,16 @@ export class Game {
 
     let shown = 0;
     const positions = lineWins.flatMap((w) => w.positions);
+    const isBig = total >= BIG_WIN_MIN * this.bet;
+    this.combo = 0;
 
     if (lineTotal > 0) {
       this.reels.drawLines(lineWins);
       this.reels.highlight(scatterWin > 0 ? [...positions, ...scatters] : positions);
       this.kraken.celebrate();
+      if (!isBig) this.kraken.say('win');
       shown = lineTotal;
-      await this.winDisplay.count(0, lineTotal, skip() ? 0.05 : 0.7);
+      await this.#count(0, lineTotal, skip() ? 0.05 : 0.7);
       await waitUnless(0.45, skip);
 
       if (multiplier > 1) {
@@ -324,19 +344,21 @@ export class Game {
             this.screenFx.addShake(3);
           });
         }
-        await this.winDisplay.slamMultiplier(multiplier);
+        const slam = this.winDisplay.slamMultiplier(multiplier);
+        sfx.multiplier();
+        await slam;
         this.screenFx.addShake(14);
         this.screenFx.shockwave(REELS_CENTER.x, REELS_CENTER.y, { amplitude: 36, wavelength: 180, radius: 900 });
         this.#sparkle(REELS_CENTER.x, REELS_CENTER.y, 0xff5df0, 60);
         const target = lineTotal * multiplier;
-        await this.winDisplay.count(shown, target, skip() ? 0.05 : 1);
+        await this.#count(shown, target, skip() ? 0.05 : 1);
         shown = target;
       }
     }
 
     if (scatterWin > 0) {
       if (lineTotal === 0) this.reels.highlight(scatters, 4);
-      await this.winDisplay.count(shown, shown + scatterWin, skip() ? 0.05 : 0.5);
+      await this.#count(shown, shown + scatterWin, skip() ? 0.05 : 0.5);
     }
 
     this.wallet.credit(total);
@@ -347,9 +369,10 @@ export class Game {
       this.hud.setWin(total);
     }
 
-    if (total >= BIG_WIN_MIN * this.bet) {
+    if (isBig) {
       this.winDisplay.hide();
       this.kraken.celebrate(3);
+      this.kraken.say('big');
       this.screenFx.addShake(18);
       await this.bigWin.play(total, this.bet);
     } else {
@@ -357,11 +380,19 @@ export class Game {
     }
   }
 
-  async #runFreeSpins(count) {
+  /** Contagem no visor com tiques que sobem de tom ao longo do combo, fechando com um acorde. */
+  async #count(from, to, duration) {
+    const roll = sfx.roll(duration, this.combo);
+    this.combo = roll.step;
+    await this.winDisplay.count(from, to, duration);
+    sfx.winStinger(this.combo);
+  }
+
+  async #runFreeSpins(count, scatters = []) {
     this.#stopWinLoop();
     this.kraken.celebrate(2);
     this.#switchMusic(this.featureMusic, { rewind: true });
-    await wait(0.6);
+    await this.#scatterCelebration(scatters);
     await this.banner.intro(count);
 
     this.fs = { left: count, played: 0, multiplier: 0, win: 0 };
@@ -384,6 +415,7 @@ export class Game {
       if (result.freeSpins > 0) {
         this.fs.left += RETRIGGER_SPINS;
         this.panel.setSpins(this.fs.played, this.fs.played + this.fs.left);
+        sfx.featureStart();
         await this.banner.toast(`+${RETRIGGER_SPINS} RODADAS GRÁTIS`);
       }
       this.reels.clearWins();
@@ -401,6 +433,104 @@ export class Game {
   }
 
   // ---------- efeitos ----------
+
+  /** Antes do banner: cada baú acende com um feixe de luz, depois todos voam e se fundem no centro. */
+  async #scatterCelebration(scatters) {
+    this.winDisplay.hide();
+    this.background.setFeatureMode(true);
+    this.reels.highlight(scatters, 10);
+    sfx.scatterTrigger(0.45 * scatters.length + 0.5);
+
+    for (const [k, [reel, row]] of scatters.entries()) {
+      const p = this.#cellCenter(reel, row);
+      sfx.chestFlare(k);
+      this.#lightPillar(p.x, p.y);
+      this.#sparkle(p.x, p.y, 0xffd34d, 45);
+      this.screenFx.addShake(5 + k * 3);
+      this.screenFx.shockwave(p.x, p.y, { amplitude: 18, wavelength: 110, speed: 700, radius: 280 });
+      await wait(0.45);
+    }
+    await wait(0.35);
+
+    const target = { x: 960, y: 300 };
+    sfx.whoosh(0.75);
+    const flights = scatters.map(([reel, row], k) => {
+      const start = this.#cellCenter(reel, row);
+      const symbol = this.reels.symbolAt(reel, row);
+      if (symbol) symbol.visible = false;
+
+      const tex = this.ctx.textures.sym_scatter;
+      const s = (CELL * 0.86) / Math.max(tex.width, tex.height);
+      const flyer = new Sprite(tex);
+      flyer.anchor.set(0.5);
+      flyer.scale.set(s);
+      flyer.position.set(start.x, start.y);
+      this.flyers.addChild(flyer);
+
+      const midX = (start.x + target.x) / 2 + rand(-200, 200);
+      const midY = Math.min(start.y, target.y) - rand(120, 220);
+      const path = { t: 0 };
+      return gsap
+        .timeline({ delay: k * 0.07 })
+        .to(flyer.scale, { x: s * 1.4, y: s * 1.4, duration: 0.18, ease: 'back.out(3)' })
+        .to(path, {
+          t: 1,
+          duration: 0.6,
+          ease: 'power2.in',
+          onUpdate: () => {
+            const { t } = path;
+            const u = 1 - t;
+            flyer.x = u * u * start.x + 2 * u * t * midX + t * t * target.x;
+            flyer.y = u * u * start.y + 2 * u * t * midY + t * t * target.y;
+            for (let i = 0; i < 2; i++) {
+              this.fx.spawn({
+                texture: this.ctx.glowTex,
+                x: flyer.x + rand(-20, 20),
+                y: flyer.y + rand(-20, 20),
+                life: rand(0.3, 0.6),
+                scaleStart: rand(0.3, 0.55),
+                scaleEnd: 0,
+                colorStart: 0xffd34d,
+                colorEnd: 0xff5df0,
+              });
+            }
+          },
+        })
+        .to(flyer, { rotation: Math.PI * 2, duration: 0.6, ease: 'power2.in' }, '<')
+        .to(flyer.scale, { x: s * 2.2, y: s * 2.2, duration: 0.6, ease: 'power2.in' }, '<')
+        .add(() => flyer.destroy());
+    });
+
+    await Promise.all(flights);
+
+    this.banner.flashScreen(1, 0.8);
+    this.screenFx.addShake(26);
+    this.screenFx.shockwave(target.x, target.y, { amplitude: 40, wavelength: 200, speed: 900, radius: 1100 });
+    this.#sparkle(target.x, target.y, 0xffd34d, 90);
+    for (const [reel, row] of scatters) {
+      const symbol = this.reels.symbolAt(reel, row);
+      if (symbol) symbol.visible = true;
+    }
+    this.reels.clearWins();
+  }
+
+  #lightPillar(x, y) {
+    const beam = new Sprite(this.ctx.glowTex);
+    beam.anchor.set(0.5, 0.92);
+    beam.tint = 0xffd34d;
+    beam.blendMode = 'add';
+    beam.position.set(x, y + 40);
+    this.flyers.addChild(beam);
+    gsap.fromTo(beam.scale, { x: 2.2, y: 0 }, { x: 0.9, y: 9, duration: 0.35, ease: 'power3.out' });
+    gsap.fromTo(beam, { alpha: 1 }, { alpha: 0, duration: 1.4, delay: 0.3, onComplete: () => beam.destroy() });
+
+    const ring = new Graphics().circle(0, 0, 50).stroke({ color: 0xffe9a0, width: 8 });
+    ring.blendMode = 'add';
+    ring.position.set(x, y);
+    this.flyers.addChild(ring);
+    gsap.fromTo(ring.scale, { x: 0.4, y: 0.4 }, { x: 3.5, y: 3.5, duration: 0.6, ease: 'power2.out' });
+    gsap.fromTo(ring, { alpha: 1 }, { alpha: 0, duration: 0.6, onComplete: () => ring.destroy() });
+  }
 
   #cellCenter(reel, row) {
     return { x: REELS_X + reel * CELL + CELL / 2, y: REELS_Y + row * CELL + CELL / 2 };
@@ -457,6 +587,7 @@ export class Game {
         .to(flyer.scale, { x: 0.5, y: 0.5, duration: 0.32, ease: 'power2.in' }, '<')
         .add(() => {
           this.#sparkle(target.x, target.y, 0x7cf3ff, 30);
+          sfx.bubblePop(k);
           onArrive?.(b.value);
           flyer.destroy({ children: true });
         });

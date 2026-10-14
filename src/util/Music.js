@@ -19,10 +19,22 @@ export class Music {
     this.audio.volume = 0;
     this.volume = volume;
     this.level = { v: 0 };
+    this.duckLevel = { v: 1 };
     this.muted = localStorage.getItem(MUTE_KEY) === '1';
     const saved = Number(localStorage.getItem(VOLUME_KEY) ?? 1);
     this.userVolume = Number.isFinite(saved) ? Math.min(1, Math.max(0, saved)) : 1;
     this.stopped = false;
+  }
+
+  /** Abaixa todas as músicas por `seconds` (ex.: enquanto o polvo fala) e volta suavemente. */
+  static duck(seconds, level = 0.35) {
+    for (const m of Music.#all) {
+      gsap.killTweensOf(m.duckLevel);
+      gsap
+        .timeline()
+        .to(m.duckLevel, { v: level, duration: 0.12, onUpdate: () => m.#apply() })
+        .to(m.duckLevel, { v: 1, duration: 0.5, delay: seconds, onUpdate: () => m.#apply() });
+    }
   }
 
   get playing() {
@@ -85,7 +97,7 @@ export class Music {
   }
 
   #apply() {
-    const v = this.muted ? 0 : this.level.v * this.userVolume;
+    const v = this.muted ? 0 : this.level.v * this.userVolume * this.duckLevel.v;
     this.audio.volume = Math.min(1, Math.max(0, v));
   }
 }

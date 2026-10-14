@@ -1,5 +1,6 @@
 import { Container, FillGradient, Graphics, Sprite, Text } from 'pixi.js';
 import gsap from 'gsap';
+import { sfx } from '../audio/Sfx.js';
 import { ParticleSystem } from '../util/ParticleSystem.js';
 import { goldStyle, makeShineTexture, plainStyle, rand } from '../util/fx.js';
 import { DESIGN_H, DESIGN_W, KRAKEN } from './layout.js';
@@ -207,6 +208,7 @@ export class StartScreen extends Container {
       draw: (g) => drawSpeaker(g, this.music.muted),
       onClick: () => {
         this.music.setMuted(!this.music.muted);
+        sfx.setMuted(this.music.muted);
         if (!this.music.muted && !this.music.playing) this.music.play();
         btn.redraw();
       },

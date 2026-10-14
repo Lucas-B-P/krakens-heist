@@ -1,5 +1,50 @@
-import { Container, Graphics } from 'pixi.js';
+import { Container, Graphics, Text } from 'pixi.js';
 import gsap from 'gsap';
+import { sfx } from '../audio/Sfx.js';
+import { pick } from '../util/fx.js';
+
+const LINES = {
+  win: ['É MEU!', 'TESOURO!', 'HEHEHE!', 'QUE BELEZA!', 'MAIS OURO!', 'PERFEITO!'],
+  big: ['HAHAHA!', 'EU SOU RICO!', 'GOLPE DE MESTRE!', 'O COFRE É NOSSO!'],
+  scatter: ['HORA DO ASSALTO!', 'OS BAÚS SÃO MEUS!', 'HAHAHA, BAÚS!'],
+  tease: ['VAI... VAI...!', 'MAIS UM BAÚ...!', 'QUASE LÁ...!'],
+};
+
+class SpeechBubble extends Container {
+  constructor() {
+    super();
+    this.bg = new Graphics();
+    this.text = new Text({
+      text: '',
+      style: { fontFamily: '"Lilita One", sans-serif', fontSize: 40, fill: '#3b0d57', letterSpacing: 1 },
+    });
+    this.text.anchor.set(0.5);
+    this.addChild(this.bg, this.text);
+    this.visible = false;
+  }
+
+  show(text, hold = 1.6) {
+    this.text.text = text;
+    const w = Math.max(180, this.text.width + 60);
+    const h = 84;
+    this.bg
+      .clear()
+      .poly([-w * 0.25, h / 2 - 4, -w * 0.38, h / 2 + 34, -w * 0.08, h / 2 - 4])
+      .fill(0xfffbe8)
+      .stroke({ color: 0xffd34d, width: 4 })
+      .roundRect(-w / 2, -h / 2, w, h, h / 2)
+      .fill(0xfffbe8)
+      .stroke({ color: 0xffd34d, width: 4 })
+      .rect(-w * 0.36, h / 2 - 8, w * 0.27, 8)
+      .fill(0xfffbe8);
+
+    gsap.killTweensOf([this, this.scale]);
+    this.visible = true;
+    this.alpha = 1;
+    gsap.fromTo(this.scale, { x: 0.2, y: 0.2 }, { x: 1, y: 1, duration: 0.45, ease: 'elastic.out(1, 0.5)' });
+    gsap.to(this, { alpha: 0, duration: 0.3, delay: hold, onComplete: () => (this.visible = false) });
+  }
+}
 
 export class Kraken extends Container {
   /**
@@ -21,8 +66,21 @@ export class Kraken extends Container {
     this.lean = new Container();
     this.lean.addChild(this.body);
 
-    this.addChild(this.shadow, this.lean);
+    this.bubble = new SpeechBubble();
+    this.bubble.position.set(visual.width * this.baseScale * 0.32, -height - 75);
+
+    this.addChild(this.shadow, this.lean, this.bubble);
     this.time = 0;
+  }
+
+  /** Fala uma frase do tipo `kind` (win, big, scatter, tease): balão + voz sintetizada. */
+  say(kind) {
+    const now = performance.now();
+    if (kind === 'win' && now - (this.lastSay ?? -1e9) < 3500) return;
+    this.lastSay = now;
+    const text = pick(LINES[kind] ?? LINES.win);
+    this.bubble.show(text, kind === 'tease' ? 1.4 : 2.2);
+    sfx.speak(text, { pitch: kind === 'big' || kind === 'scatter' ? 1.12 : 1 });
   }
 
   update(dt) {

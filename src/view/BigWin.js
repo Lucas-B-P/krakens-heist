@@ -1,5 +1,6 @@
 import { Container, Graphics, Sprite, Text } from 'pixi.js';
 import gsap from 'gsap';
+import { sfx } from '../audio/Sfx.js';
 import { BIG_WIN_TIERS } from '../game/config.js';
 import { ParticleSystem } from '../util/ParticleSystem.js';
 import { fmt, goldStyle, rand, waitUnless } from '../util/fx.js';
@@ -108,6 +109,9 @@ export class BigWin extends Container {
 
     let tierIndex = 0;
     this.#setTitle(tiers[0].label);
+    sfx.bigWin();
+    const ticks = Math.max(1, Math.round(duration / 0.075));
+    const roll = sfx.roll(duration, 0, 26 / ticks);
 
     const counter = gsap.to(this, {
       value: amount,
@@ -120,13 +124,18 @@ export class BigWin extends Container {
           tierIndex++;
           this.emitting += 14;
           this.#setTitle(next.label);
+          sfx.bigWinTier(tierIndex);
         }
       },
     });
 
     await waitUnless(duration + 0.05, () => this.skipped);
-    if (counter.isActive()) counter.progress(1);
+    if (counter.isActive()) {
+      counter.progress(1);
+      roll.cancel();
+    }
     if (tierIndex < tiers.length - 1) this.#setTitle(tiers[tiers.length - 1].label);
+    sfx.winStinger(26);
 
     gsap.fromTo(this.amount.scale, { x: 1.4, y: 1.4 }, { x: 1, y: 1, duration: 0.6, ease: 'elastic.out(1, 0.35)' });
     this.#burst(90);

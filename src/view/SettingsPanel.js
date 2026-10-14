@@ -1,11 +1,12 @@
 import { Container, FillGradient, Graphics, Text } from 'pixi.js';
 import gsap from 'gsap';
+import { sfx } from '../audio/Sfx.js';
 import { goldStyle, plainStyle } from '../util/fx.js';
 import { bindPress, Button } from './Button.js';
 import { DESIGN_H, DESIGN_W } from './layout.js';
 
 const W = 760;
-const H = 640;
+const H = 720;
 const LABEL_X = -W / 2 + 60;
 const CONTROL_X = W / 2 - 60;
 const SLIDER_W = 300;
@@ -60,11 +61,12 @@ export class SettingsPanel extends Container {
 
     this.box.addChild(bg, title, divider);
 
-    this.soundToggle = this.#toggle(-130, 'SOM', () => !this.music.muted, () => onMute());
-    this.volume = this.#slider(-30, 'MÚSICA');
-    this.turboToggle = this.#toggle(70, 'GIRO TURBO', () => this.isTurbo(), () => onTurbo());
+    this.soundToggle = this.#toggle(-170, 'SOM', () => !this.music.muted, () => onMute());
+    this.volume = this.#slider(-80, 'MÚSICA', () => this.music.userVolume, (v) => this.music.setUserVolume(v));
+    this.sfxVolume = this.#slider(10, 'EFEITOS', () => sfx.volume, (v) => sfx.setVolume(v), () => sfx.click());
+    this.turboToggle = this.#toggle(100, 'GIRO TURBO', () => this.isTurbo(), () => onTurbo());
 
-    this.#label('SALDO DE TESTE', 175);
+    this.#label('SALDO DE TESTE', 195);
     this.resetBtn = new Button({
       width: 300,
       height: 64,
@@ -75,7 +77,7 @@ export class SettingsPanel extends Container {
         this.#flash(ok ? 'Saldo restaurado!' : 'Aguarde o giro terminar', ok ? '#7cff6b' : '#ff8a8a');
       },
     });
-    this.resetBtn.position.set(CONTROL_X - 150, 175);
+    this.resetBtn.position.set(CONTROL_X - 150, 195);
 
     this.feedback = new Text({ text: '', style: plainStyle(24, '#7cff6b') });
     this.feedback.anchor.set(0.5);
@@ -124,6 +126,7 @@ export class SettingsPanel extends Container {
     this.soundToggle.refresh();
     this.turboToggle.refresh();
     this.volume.refresh();
+    this.sfxVolume.refresh();
   }
 
   #label(text, y) {
@@ -162,7 +165,8 @@ export class SettingsPanel extends Container {
     return { refresh: () => refresh() };
   }
 
-  #slider(y, label) {
+  /** `onRelease` roda ao soltar (ex.: tocar um som de amostra no volume escolhido). */
+  #slider(y, label, get, set, onRelease) {
     this.#label(label, y);
     const slider = new Container();
     slider.position.set(CONTROL_X - SLIDER_W, y);
@@ -180,14 +184,14 @@ export class SettingsPanel extends Container {
     slider.hitArea = { contains: (x, yy) => x >= -20 && x <= SLIDER_W + 20 && yy >= -30 && yy <= 30 };
 
     const refresh = () => {
-      const v = this.music.userVolume;
+      const v = get();
       knob.x = v * SLIDER_W;
       fill.clear().roundRect(0, -8, Math.max(16, v * SLIDER_W), 16, 8).fill(0x2fd8ff);
       pct.text = `${Math.round(v * 100)}%`;
     };
     const setFrom = (e) => {
       const x = slider.toLocal(e.global).x;
-      this.music.setUserVolume(x / SLIDER_W);
+      set(Math.min(1, Math.max(0, x / SLIDER_W)));
       refresh();
     };
     let dragging = false;
@@ -196,7 +200,10 @@ export class SettingsPanel extends Container {
       setFrom(e);
     });
     slider.on('globalpointermove', (e) => dragging && setFrom(e));
-    const stop = () => (dragging = false);
+    const stop = () => {
+      if (dragging) onRelease?.();
+      dragging = false;
+    };
     slider.on('pointerup', stop);
     slider.on('pointerupoutside', stop);
     refresh();
