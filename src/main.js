@@ -36,16 +36,36 @@ function goLandscape() {
     .catch(() => {});
 }
 
+/**
+ * Ao girar o aparelho, o navegador (principalmente o Safari do iPhone) avisa antes de atualizar
+ * as medidas da tela. Medimos de novo em alguns instantes até o tamanho estabilizar.
+ */
+function watchViewport(app) {
+  let timers = [];
+  const refit = () => {
+    timers.forEach(clearTimeout);
+    app.resize();
+    timers = [50, 150, 300, 600, 1000].map((ms) => setTimeout(() => app.resize(), ms));
+  };
+  window.addEventListener('resize', refit);
+  window.addEventListener('orientationchange', refit);
+  screen.orientation?.addEventListener?.('change', refit);
+  window.visualViewport?.addEventListener('resize', refit);
+  document.addEventListener('fullscreenchange', refit);
+}
+
 async function boot() {
+  const container = document.getElementById('game');
   const app = new Application();
   await app.init({
-    resizeTo: window,
+    resizeTo: container,
     background: '#020d16',
     antialias: true,
     resolution: Math.min(window.devicePixelRatio, IS_TOUCH ? 1.5 : 2),
     autoDensity: true,
   });
-  document.body.appendChild(app.canvas);
+  container.appendChild(app.canvas);
+  watchViewport(app);
 
   const music = new Music('audio/menu.mp3');
   const autoplay = music.play();
