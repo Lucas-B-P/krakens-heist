@@ -160,12 +160,15 @@ class Sfx {
   spinStart() {
     if (!this.ready) return;
     const t = this.now;
-    this.#noise(t, { dur: 0.6, gain: 0.3, freq: 250, freqEnd: 1600, q: 1.5, attack: 0.08, out: this.water });
-    for (let i = 0; i < 9; i++) {
-      const dt = 0.22 * (1 - Math.sqrt(1 - i / 9));
-      this.#noise(t + dt, { dur: 0.03, gain: 0.18, freq: 2200, q: 3, out: this.water });
+    this.#tone(t, { freq: 70, freqEnd: 140, dur: 0.35, gain: 0.35, attack: 0.02, out: this.water });
+    this.#noise(t, { dur: 0.7, gain: 0.55, freq: 220, freqEnd: 2200, q: 1.3, attack: 0.07, out: this.water });
+    this.#noise(t + 0.05, { dur: 0.5, gain: 0.18, freq: 1500, freqEnd: 6000, q: 1, attack: 0.2 });
+    for (let i = 0; i < 12; i++) {
+      const dt = 0.28 * (1 - Math.sqrt(1 - i / 12));
+      this.#noise(t + dt, { dur: 0.03, gain: 0.22, freq: 3200, q: 4 });
+      this.#tone(t + dt, { type: 'square', freq: 1700 + i * 60, dur: 0.015, gain: 0.04 });
     }
-    for (let i = 0; i < 7; i++) this.#bubble(t + rand(0, 0.45), rand(0.6, 1.6), 0.1);
+    for (let i = 0; i < 14; i++) this.#bubble(t + rand(0, 0.6), rand(0.5, 1.7), 0.16);
     this.#startChurn();
   }
 
@@ -197,33 +200,39 @@ class Sfx {
     band.frequency.value = 520;
     band.Q.value = 1.4;
     const pulse = ctx.createGain();
-    pulse.gain.value = 0.09;
+    pulse.gain.value = 0.17;
     const lfo = ctx.createOscillator();
     lfo.frequency.value = 13;
     const lfoDepth = ctx.createGain();
-    lfoDepth.gain.value = 0.07;
+    lfoDepth.gain.value = 0.13;
     lfo.connect(lfoDepth).connect(pulse.gain);
     src.connect(band).connect(pulse).connect(out);
 
     const hum = ctx.createOscillator();
     hum.frequency.value = 62;
     const humGain = ctx.createGain();
-    humGain.gain.value = 0.06;
+    humGain.gain.value = 0.11;
     hum.connect(humGain).connect(out);
 
     [src, lfo, hum].forEach((s) => s.start(t));
+    // Catraca da roda (fora do filtro de água, para ficar nítida) + bolhas soltas.
     const timer = setInterval(() => {
-      if (this.ready && Math.random() < 0.55) this.#bubble(this.now, rand(0.6, 1.8), 0.07);
-    }, 110);
+      if (!this.ready) return;
+      const now = this.now;
+      this.#noise(now, { dur: 0.025, gain: 0.09, freq: rand(2600, 3400), q: 5 });
+      if (Math.random() < 0.7) this.#bubble(now, rand(0.5, 1.8), 0.11);
+    }, 75);
     this.churn = { out, timer, sources: [src, lfo, hum] };
   }
 
   reelStop(index) {
     if (!this.ready) return;
     const t = this.now;
-    this.#thud(t, { freq: 120 + index * 8, gain: 0.4 });
-    this.#noise(t, { dur: 0.05, gain: 0.12, freq: 3000, q: 2, out: this.water });
-    this.#bubble(t + 0.03, 1.2, 0.08);
+    this.#thud(t, { freq: 120 + index * 8, gain: 0.6 });
+    this.#noise(t, { dur: 0.06, gain: 0.22, freq: 2600, q: 3 });
+    this.#tone(t, { type: 'square', freq: 900 + index * 70, freqEnd: 450, dur: 0.05, gain: 0.05 });
+    this.#bubble(t + 0.03, 1.2, 0.14);
+    this.#bubble(t + 0.07, 0.8, 0.1);
   }
 
   /** Baú caindo: pancada grave + sino que sobe a cada baú (1º, 2º, 3º...). */
@@ -301,20 +310,26 @@ class Sfx {
     for (let k = 0; k < ticks; k++) {
       const s = Math.min(step + k * rise, 30);
       const t = t0 + (k * duration) / ticks;
-      this.#tone(t, { freq: note(3 + s), dur: 0.09, gain: 0.07, out: bus });
-      this.#tone(t, { freq: note(3 + s) * 2.01, dur: 0.06, gain: 0.03, out: bus });
+      const f = note(3 + s);
+      this.#tone(t, { freq: f, dur: 0.1, gain: 0.15, out: bus });
+      this.#tone(t, { freq: f * 2.01, dur: 0.07, gain: 0.06, out: bus });
+      this.#tone(t, { type: 'triangle', freq: f * 3.02, dur: 0.04, gain: 0.03, out: bus });
+      this.#noise(t, { dur: 0.025, gain: 0.05, type: 'highpass', freq: 7000, q: 0.7, out: bus });
     }
     if (duration > 0.3) {
-      const s = Math.min(step, 30);
-      this.#tone(t0, {
-        type: 'triangle',
-        freq: note(-9 + s),
-        freqEnd: note(-9 + Math.min(step + ticks * rise, 30)),
-        dur: duration,
-        gain: 0.05,
-        attack: duration * 0.6,
-        out: bus,
-      });
+      const from = note(-9 + Math.min(step, 30));
+      const to = note(-9 + Math.min(step + ticks * rise, 30));
+      [1, 1.5].forEach((ratio) =>
+        this.#tone(t0, {
+          type: 'triangle',
+          freq: from * ratio,
+          freqEnd: to * ratio,
+          dur: duration + 0.1,
+          gain: 0.08,
+          attack: duration * 0.7,
+          out: bus,
+        }),
+      );
     }
     return {
       step: step + ticks * rise,
@@ -330,7 +345,8 @@ class Sfx {
     if (!this.ready) return;
     const t = this.now;
     const base = 3 + Math.min(step, 24) * 0.5;
-    [0, 4, 7, 12].forEach((s, i) => this.#bell(t + i * 0.055, note(base + s), { gain: 0.12, dur: 0.9 }));
+    [0, 4, 7, 12].forEach((s, i) => this.#bell(t + i * 0.055, note(base + s), { gain: 0.2, dur: 1 }));
+    this.#noise(t, { dur: 0.6, gain: 0.07, type: 'highpass', freq: 6000, q: 0.5 });
   }
 
   bubblePop(index = 0) {

@@ -274,6 +274,7 @@ export class Game {
     this.hud.setSpinning(true);
     this.scattersLanded = 0;
     sfx.spinStart();
+    this.#spinBurst();
     await this.reels.spin(result.grid, {
       turbo: this.turbo,
       slam: () => this.slamRequested,
@@ -285,6 +286,7 @@ export class Game {
       },
     });
     sfx.spinStop();
+    this.spinningReels = null;
     this.hud.setSpinning(false);
     this.skipRequested = false;
     return result;
@@ -292,6 +294,7 @@ export class Game {
 
   #onReelStop(reel, column, symbols) {
     sfx.reelStop(reel);
+    this.#reelImpact(reel);
     const scatters = column.filter((c) => c.id === 'scatter').length;
     if (scatters) {
       const before = this.scattersLanded;
@@ -335,7 +338,7 @@ export class Game {
       this.kraken.celebrate();
       if (!isBig) this.kraken.say('win');
       shown = lineTotal;
-      await this.#count(0, lineTotal, skip() ? 0.05 : 0.7);
+      await this.#count(0, lineTotal, skip() ? 0.05 : 1);
       await waitUnless(0.45, skip);
 
       if (multiplier > 1) {
@@ -382,7 +385,7 @@ export class Game {
 
   /** Contagem no visor com tiques que sobem de tom ao longo do combo, fechando com um acorde. */
   async #count(from, to, duration) {
-    const roll = sfx.roll(duration, this.combo);
+    const roll = sfx.roll(duration, this.combo, 0.8);
     this.combo = roll.step;
     await this.winDisplay.count(from, to, duration);
     sfx.winStinger(this.combo);
@@ -514,6 +517,111 @@ export class Game {
     this.reels.clearWins();
   }
 
+  /** Arranque: cada coluna dá um clarão, solta bolhas e um anel sai do botão de girar. */
+  #spinBurst() {
+    this.spinningReels = new Set([0, 1, 2, 3, 4]);
+    const step = this.turbo ? 0.02 : 0.06;
+    for (let i = 0; i < 5; i++) {
+      gsap.delayedCall(i * step, () => {
+        const x = REELS_X + i * CELL + CELL / 2;
+        this.#columnFlash(x, 0x7cf3ff, 0.55);
+        for (let k = 0; k < 10; k++) {
+          this.fx.spawn({
+            texture: this.ctx.bubbleTex,
+            blendMode: 'normal',
+            x: x + rand(-CELL * 0.4, CELL * 0.4),
+            y: REELS_Y + REELS_H - rand(0, 30),
+            vy: -rand(300, 700),
+            vx: rand(-40, 40),
+            drag: 0.97,
+            sway: rand(20, 50),
+            life: rand(0.6, 1.1),
+            scaleStart: rand(0.06, 0.16),
+            alpha: 0.85,
+          });
+        }
+      });
+    }
+    this.screenFx.addShake(3);
+
+    const ring = new Graphics().circle(0, 0, 90).stroke({ color: 0x7cf3ff, width: 10 });
+    ring.blendMode = 'add';
+    ring.position.set(1625, 985);
+    this.hud.addChild(ring);
+    gsap.fromTo(ring.scale, { x: 0.9, y: 0.9 }, { x: 2.2, y: 2.2, duration: 0.45, ease: 'power2.out' });
+    gsap.fromTo(ring, { alpha: 1 }, { alpha: 0, duration: 0.45, onComplete: () => ring.destroy() });
+  }
+
+  /** Rolo travando: clarão na coluna, nuvem de bolhas embaixo e um tranco. */
+  #reelImpact(reel) {
+    this.spinningReels?.delete(reel);
+    const x = REELS_X + reel * CELL + CELL / 2;
+    this.#columnFlash(x, 0xffffff, 0.35);
+    this.screenFx.addShake(2.5);
+    for (let k = 0; k < 12; k++) {
+      const a = rand(-Math.PI, 0);
+      const sp = rand(80, 260);
+      this.fx.spawn({
+        texture: this.ctx.bubbleTex,
+        blendMode: 'normal',
+        x: x + rand(-CELL * 0.45, CELL * 0.45),
+        y: REELS_Y + REELS_H - 10,
+        vx: Math.cos(a) * sp,
+        vy: Math.sin(a) * sp,
+        gravity: -200,
+        drag: 0.94,
+        life: rand(0.5, 0.9),
+        scaleStart: rand(0.05, 0.12),
+        alpha: 0.8,
+      });
+    }
+  }
+
+  #columnFlash(x, color, alpha) {
+    const flash = new Sprite(this.ctx.glowTex);
+    flash.anchor.set(0.5);
+    flash.tint = color;
+    flash.blendMode = 'add';
+    flash.position.set(x, REELS_Y + REELS_H / 2);
+    flash.width = CELL * 1.3;
+    flash.height = REELS_H * 1.5;
+    this.flyers.addChild(flash);
+    gsap.fromTo(flash, { alpha }, { alpha: 0, duration: 0.4, ease: 'power2.out', onComplete: () => flash.destroy() });
+  }
+
+  /** Enquanto os rolos giram: faíscas descendo e bolhas subindo dentro das colunas. */
+  #spinTrails(dt) {
+    if (!this.spinningReels?.size) return;
+    for (const i of this.spinningReels) {
+      const x = REELS_X + i * CELL + CELL / 2;
+      if (Math.random() < dt * 14) {
+        this.fx.spawn({
+          texture: this.ctx.glowTex,
+          x: x + rand(-CELL * 0.4, CELL * 0.4),
+          y: REELS_Y + rand(0, 40),
+          vy: rand(900, 1400),
+          life: REELS_H / 1100,
+          scaleStart: rand(0.08, 0.16),
+          colorStart: 0x9ff6ff,
+          alpha: 0.7,
+        });
+      }
+      if (Math.random() < dt * 8) {
+        this.fx.spawn({
+          texture: this.ctx.bubbleTex,
+          blendMode: 'normal',
+          x: x + rand(-CELL * 0.4, CELL * 0.4),
+          y: REELS_Y + REELS_H - 10,
+          vy: -rand(250, 450),
+          sway: rand(20, 40),
+          life: REELS_H / 400,
+          scaleStart: rand(0.04, 0.1),
+          alpha: 0.6,
+        });
+      }
+    }
+  }
+
   #lightPillar(x, y) {
     const beam = new Sprite(this.ctx.glowTex);
     beam.anchor.set(0.5, 0.92);
@@ -639,6 +747,7 @@ export class Game {
     this.kraken.update(dt);
     this.logo.update(dt);
     this.reels.update(dt);
+    this.#spinTrails(dt);
     this.panel.update(dt);
     this.fx.update(dt);
     this.hud.update(dt);
