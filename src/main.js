@@ -24,13 +24,25 @@ const GAME_MANIFEST = {
 /** Fatia da barra de carregamento ocupada pelos símbolos; o resto é o sprite sheet do Kraken. */
 const SYMBOLS_SHARE = 0.4;
 
+const IS_TOUCH = window.matchMedia('(pointer: coarse)').matches;
+
+/** Em celular: tela cheia + trava na horizontal (Android/Chrome; iOS ignora e fica o aviso de girar). */
+function goLandscape() {
+  if (!IS_TOUCH || document.fullscreenElement) return;
+  const el = document.documentElement;
+  const request = el.requestFullscreen ?? el.webkitRequestFullscreen;
+  Promise.resolve(request?.call(el, { navigationUI: 'hide' }))
+    .then(() => screen.orientation?.lock?.('landscape'))
+    .catch(() => {});
+}
+
 async function boot() {
   const app = new Application();
   await app.init({
     resizeTo: window,
     background: '#020d16',
     antialias: true,
-    resolution: Math.min(window.devicePixelRatio, 2),
+    resolution: Math.min(window.devicePixelRatio, IS_TOUCH ? 1.5 : 2),
     autoDensity: true,
   });
   document.body.appendChild(app.canvas);
@@ -66,6 +78,7 @@ async function boot() {
   await loading.close();
 
   await start.waitForPlay();
+  goLandscape();
   music.stop(1.2);
   gameMusic.setMuted(music.muted);
   gameMusic.play(2);

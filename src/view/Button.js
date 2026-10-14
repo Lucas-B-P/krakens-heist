@@ -1,7 +1,10 @@
-import { Container, FillGradient, Graphics, Text } from 'pixi.js';
+import { Circle, Container, FillGradient, Graphics, Rectangle, Text } from 'pixi.js';
 import gsap from 'gsap';
 import { sfx } from '../audio/Sfx.js';
 import { plainStyle } from '../util/fx.js';
+
+/** Margem extra de toque (em pixels de design) além do desenho do botão — dedos são maiores que o cursor. */
+const TOUCH_PAD = 18;
 
 export function bindPress(target, onClick) {
   target.eventMode = 'static';
@@ -28,6 +31,7 @@ export class Button extends Container {
     this.addChild(this.bg, this.label);
     this.setActive(false);
     bindPress(this, onClick);
+    this.hitArea = new Rectangle(-width / 2 - TOUCH_PAD, -height / 2 - TOUCH_PAD, width + TOUCH_PAD * 2, height + TOUCH_PAD * 2);
     this._enabled = true;
   }
 
@@ -153,6 +157,7 @@ export class IconButton extends Container {
     this.icon.scale.set(radius / 38);
     this.addChild(this.disc, this.icon);
     bindPress(this, onClick);
+    this.hitArea = new Circle(0, 0, radius + TOUCH_PAD);
     this.redraw();
   }
 
