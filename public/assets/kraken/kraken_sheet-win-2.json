@@ -1,0 +1,165 @@
+{
+  "frames": {
+    "win_054": {
+      "frame": {
+        "x": 0,
+        "y": 0,
+        "w": 448,
+        "h": 600
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 448,
+        "h": 600
+      },
+      "sourceSize": {
+        "w": 448,
+        "h": 600
+      }
+    },
+    "win_055": {
+      "frame": {
+        "x": 450,
+        "y": 0,
+        "w": 448,
+        "h": 600
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 448,
+        "h": 600
+      },
+      "sourceSize": {
+        "w": 448,
+        "h": 600
+      }
+    },
+    "win_056": {
+      "frame": {
+        "x": 900,
+        "y": 0,
+        "w": 448,
+        "h": 600
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 448,
+        "h": 600
+      },
+      "sourceSize": {
+        "w": 448,
+        "h": 600
+      }
+    },
+    "win_057": {
+      "frame": {
+        "x": 1350,
+        "y": 0,
+        "w": 448,
+        "h": 600
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 448,
+        "h": 600
+      },
+      "sourceSize": {
+        "w": 448,
+        "h": 600
+      }
+    },
+    "win_058": {
+      "frame": {
+        "x": 1800,
+        "y": 0,
+        "w": 448,
+        "h": 600
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 448,
+        "h": 600
+      },
+      "sourceSize": {
+        "w": 448,
+        "h": 600
+      }
+    },
+    "win_059": {
+      "frame": {
+        "x": 2250,
+        "y": 0,
+        "w": 448,
+        "h": 600
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 448,
+        "h": 600
+      },
+      "sourceSize": {
+        "w": 448,
+        "h": 600
+      }
+    },
+    "win_060": {
+      "frame": {
+        "x": 2700,
+        "y": 0,
+        "w": 448,
+        "h": 600
+      },
+      "rotated": false,
+      "trimmed": false,
+      "spriteSourceSize": {
+        "x": 0,
+        "y": 0,
+        "w": 448,
+        "h": 600
+      },
+      "sourceSize": {
+        "w": 448,
+        "h": 600
+      }
+    }
+  },
+  "animations": {
+    "win": [
+      "win_054",
+      "win_055",
+      "win_056",
+      "win_057",
+      "win_058",
+      "win_059",
+      "win_060"
+    ]
+  },
+  "meta": {
+    "image": "kraken_sheet-win-2.webp",
+    "format": "RGBA8888",
+    "size": {
+      "w": 3148,
+      "h": 600
+    },
+    "scale": "1",
+    "fps": 20
+  }
+}
