@@ -1,11 +1,11 @@
 import { Container, FillGradient, Graphics, Text } from 'pixi.js';
 import gsap from 'gsap';
 import { fmt, goldStyle, plainStyle } from '../util/fx.js';
-import { Button, SpinButton } from './Button.js';
+import { Button, drawGear, drawSpeaker, IconButton, SpinButton } from './Button.js';
 import { DESIGN_W, HUD_Y } from './layout.js';
 
 export class Hud extends Container {
-  constructor({ onSpin, onBet, onAuto, onTurbo }) {
+  constructor({ onSpin, onBet, onAuto, onTurbo, onMute, onSettings }) {
     super();
     const barH = 1080 - HUD_Y;
 
@@ -44,8 +44,19 @@ export class Hud extends Container {
     this.spin = new SpinButton({ radius: 86, onClick: onSpin });
     this.spin.position.set(1625, 985);
 
-    this.addChild(this.minus, this.plus, this.auto, this.turbo, this.spin);
+    this.muted = false;
+    this.sound = new IconButton({ draw: (g) => drawSpeaker(g, this.muted), onClick: onMute });
+    this.sound.position.set(DESIGN_W - 150, 60);
+    this.settings = new IconButton({ draw: drawGear, onClick: onSettings });
+    this.settings.position.set(DESIGN_W - 60, 60);
+
+    this.addChild(this.minus, this.plus, this.auto, this.turbo, this.spin, this.sound, this.settings);
     this.winValue = 0;
+  }
+
+  setMuted(muted) {
+    this.muted = muted;
+    this.sound.redraw();
   }
 
   #field(label, x, size) {

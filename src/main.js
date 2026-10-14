@@ -1,12 +1,18 @@
-import { Application, Assets, Container, Graphics, Text } from 'pixi.js';
-import gsap from 'gsap';
+import { Application, Assets } from 'pixi.js';
 import { Game } from './Game.js';
+import { Music } from './util/Music.js';
 import { loadCharacterVisual } from './view/characterVisuals.js';
+import { LoadingScreen } from './view/LoadingScreen.js';
+import { StartScreen } from './view/StartScreen.js';
 
-const MANIFEST = {
+/** Mínimo para desenhar a tela de carregamento. */
+const BOOT_MANIFEST = {
   bg: 'assets/bg.jpg',
-  kraken: 'assets/kraken.png',
   logo: 'assets/logo.png',
+};
+
+const GAME_MANIFEST = {
+  kraken: 'assets/kraken.png',
   ...Object.fromEntries(
     ['wild', 'scatter', 'crown', 'gold', 'pearl', 'chips', 'a', 'k', 'q', 'j'].map((s) => [
       `sym_${s}`,
@@ -15,34 +21,8 @@ const MANIFEST = {
   ),
 };
 
-function createLoader(app) {
-  const root = new Container();
-  const title = new Text({
-    text: "KRAKEN'S HEIST",
-    style: { fontFamily: '"Lilita One", sans-serif', fontSize: 56, fill: '#ffd34d', letterSpacing: 3 },
-  });
-  title.anchor.set(0.5);
-  const track = new Graphics().roundRect(-200, 0, 400, 14, 7).fill({ color: 0xffffff, alpha: 0.12 });
-  const bar = new Graphics();
-  track.y = bar.y = 60;
-  root.addChild(title, track, bar);
-  app.stage.addChild(root);
-
-  const layout = () => root.position.set(app.screen.width / 2, app.screen.height / 2 - 30);
-  layout();
-  app.renderer.on('resize', layout);
-
-  return {
-    progress(p) {
-      bar.clear().roundRect(-200, 0, 400 * p, 14, 7).fill(0x7cf3ff);
-    },
-    async destroy() {
-      await gsap.to(root, { alpha: 0, duration: 0.3 });
-      app.renderer.off('resize', layout);
-      root.destroy({ children: true });
-    },
-  };
-}
+/** Fatia da barra de carregamento ocupada pelos símbolos; o resto é o sprite sheet do Kraken. */
+const SYMBOLS_SHARE = 0.4;
 
 async function boot() {
   const app = new Application();
@@ -55,16 +35,43 @@ async function boot() {
   });
   document.body.appendChild(app.canvas);
 
+  const music = new Music('audio/menu.mp3');
+  const autoplay = music.play();
+  const gameMusic = new Music('audio/game.mp3', 0.45);
+  const featureMusic = new Music('audio/scatter.mp3', 0.5);
+
   await document.fonts.load('48px "Lilita One"').catch(() => {});
+  Assets.addBundle('boot', BOOT_MANIFEST);
+  Assets.addBundle('game', GAME_MANIFEST);
+  const bootTextures = await Assets.loadBundle('boot');
 
-  const loader = createLoader(app);
-  Assets.addBundle('game', MANIFEST);
-  const textures = await Assets.loadBundle('game', (p) => loader.progress(p));
+  const loading = new LoadingScreen(app, bootTextures);
+  const gameTextures = await Assets.loadBundle('game', (p) =>
+    loading.setProgress(p * SYMBOLS_SHARE, SYMBOLS_SHARE),
+  );
+  const textures = { ...bootTextures, ...gameTextures };
+
+  loading.setProgress(SYMBOLS_SHARE, 0.93);
   const krakenVisual = await loadCharacterVisual(textures, app.renderer);
-  await loader.destroy();
+  await loading.finish();
 
-  const game = new Game(app, textures, krakenVisual);
-  if (import.meta.env.DEV) window.__kraken = { app, game };
+  const game = new Game(app, textures, krakenVisual, { intro: true, music: gameMusic, featureMusic });
+  app.stage.addChild(loading);
+  if (import.meta.env.DEV) window.__kraken = { app, game, music, gameMusic };
+
+  if (!(await autoplay)) await loading.waitForTap(() => music.play());
+
+  const start = new StartScreen(game.ctx, game.kraken, { ticker: app.ticker, music });
+  game.world.addChild(start);
+  await loading.close();
+
+  await start.waitForPlay();
+  music.stop(1.2);
+  gameMusic.setMuted(music.muted);
+  gameMusic.play(2);
+  await start.leave();
+  game.start();
+  start.dispose();
 }
 
 boot();

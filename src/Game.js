@@ -24,17 +24,24 @@ import { CELL, DESIGN_H, DESIGN_W, KRAKEN, LOGO, REELS_X, REELS_Y } from './view
 import { Logo } from './view/Logo.js';
 import { REELS_H, REELS_W, ReelSet } from './view/ReelSet.js';
 import { ScreenFx } from './view/ScreenFx.js';
+import { SettingsPanel } from './view/SettingsPanel.js';
 import { SidePanel } from './view/SidePanel.js';
 import { bubbleColor } from './view/SymbolView.js';
 import { WinDisplay } from './view/WinDisplay.js';
 
 const AUTO_SPINS = 25;
+const START_BALANCE = 1000;
 const BIG_WIN_MIN = Math.min(...BIG_WIN_TIERS.map((t) => t.min));
 const REELS_CENTER = { x: REELS_X + REELS_W / 2, y: REELS_Y + REELS_H / 2 };
 
 export class Game {
-  constructor(app, textures, krakenVisual) {
+  /** Com `intro: true` o jogo fica escondido e sem input até `start()` (tela inicial por cima). */
+  /** `music` toca no jogo base e `featureMusic` nas rodadas grátis. */
+  constructor(app, textures, krakenVisual, { intro = false, music = null, featureMusic = null } = {}) {
     this.app = app;
+    this.music = music;
+    this.featureMusic = featureMusic;
+    this.track = music;
     this.krakenVisual = krakenVisual;
     this.ctx = {
       textures,
@@ -44,7 +51,7 @@ export class Game {
       raysTex: makeRaysTexture(),
     };
 
-    this.wallet = new Wallet(1000);
+    this.wallet = new Wallet(START_BALANCE);
     this.betIndex = 2;
     this.turbo = false;
     this.autoLeft = 0;
@@ -54,9 +61,11 @@ export class Game {
     this.fs = null;
     this.winLoop = null;
     this.size = { w: 0, h: 0 };
+    this.started = !intro;
 
     this.#buildScene();
     this.#bindInput();
+    if (intro) this.shaker.visible = this.hud.visible = false;
 
     this.wallet.onChange((b) => this.hud.setBalance(b));
     this.hud.setBet(this.bet);
@@ -99,19 +108,30 @@ export class Game {
       onBet: (d) => this.changeBet(d),
       onAuto: () => this.toggleAuto(),
       onTurbo: () => this.toggleTurbo(),
+      onMute: () => this.toggleMute(),
+      onSettings: () => this.settings.open(),
     });
+    this.hud.setMuted(this.music?.muted ?? false);
 
     this.bigWin = new BigWin(ctx);
     this.banner = new FeatureBanner(ctx);
 
+    this.settings = new SettingsPanel({
+      music: this.music,
+      isTurbo: () => this.turbo,
+      onTurbo: () => this.toggleTurbo(),
+      onMute: () => this.toggleMute(),
+      onResetBalance: () => this.resetBalance(),
+    });
+
     this.world = new Container();
-    this.world.addChild(this.shaker, this.hud, this.bigWin, this.banner);
+    this.world.addChild(this.shaker, this.hud, this.bigWin, this.banner, this.settings);
     this.app.stage.addChild(this.background, this.world);
   }
 
   #bindInput() {
     window.addEventListener('keydown', (e) => {
-      if (e.code !== 'Space' || e.repeat) return;
+      if (e.code !== 'Space' || e.repeat || !this.started || this.settings.isOpen) return;
       e.preventDefault();
       if (this.bigWin.visible) this.bigWin.skip();
       else if (this.banner.isOpen) this.banner.skip();
@@ -119,9 +139,25 @@ export class Game {
     });
   }
 
+  /** Revela rolos, painel e HUD; o Kraken volta para a cena do jogo (pode estar emprestado à tela inicial). */
+  start() {
+    if (this.started) return;
+    this.started = true;
+    this.shaker.addChildAt(this.kraken, 0);
+    this.shaker.visible = this.hud.visible = true;
+    this.hud.setMuted(this.music?.muted ?? false);
+
+    const { reels, logo, panel, hud } = this;
+    gsap.from(reels, { alpha: 0, y: reels.y + 80, duration: 0.7, ease: 'back.out(1.3)' });
+    gsap.from(logo.scale, { x: 0, y: 0, duration: 0.7, ease: 'back.out(1.8)', delay: 0.1 });
+    gsap.from(panel, { alpha: 0, x: panel.x + 160, duration: 0.7, ease: 'power3.out', delay: 0.15 });
+    gsap.from(hud, { alpha: 0, y: hud.y + 140, duration: 0.7, ease: 'power3.out', delay: 0.2 });
+  }
+
   // ---------- controles ----------
 
   onSpinPressed() {
+    if (!this.started) return;
     if (this.fs) {
       this.slamRequested = true;
       this.skipRequested = true;
@@ -160,6 +196,31 @@ export class Game {
   toggleTurbo() {
     this.turbo = !this.turbo;
     this.hud.setTurbo(this.turbo);
+  }
+
+  toggleMute() {
+    if (!this.music) return;
+    this.music.setMuted(!this.music.muted);
+    if (!this.music.muted && this.track && !this.track.playing && this.started) this.track.play();
+    this.hud.setMuted(this.music.muted);
+    this.settings.refresh();
+  }
+
+  /** Troca a faixa com crossfade; a anterior só pausa, então volta de onde parou. */
+  #switchMusic(next, { rewind = false } = {}) {
+    const prev = this.track;
+    if (!next || next === prev) return;
+    this.track = next;
+    prev?.stop(1);
+    if (rewind) next.rewind();
+    next.play(1.2);
+  }
+
+  /** Volta o saldo para o valor inicial; recusa durante giros e rodadas grátis. */
+  resetBalance() {
+    if (this.busy || this.fs) return false;
+    this.wallet.reset(START_BALANCE);
+    return true;
   }
 
   #nextAuto() {
@@ -299,6 +360,7 @@ export class Game {
   async #runFreeSpins(count) {
     this.#stopWinLoop();
     this.kraken.celebrate(2);
+    this.#switchMusic(this.featureMusic, { rewind: true });
     await wait(0.6);
     await this.banner.intro(count);
 
@@ -330,6 +392,7 @@ export class Game {
 
     const won = this.fs.win;
     await this.banner.outro(won);
+    this.#switchMusic(this.music);
     this.fs = null;
     this.background.setFeatureMode(false);
     this.panel.setMode(false);

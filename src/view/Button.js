@@ -2,7 +2,7 @@ import { Container, FillGradient, Graphics, Text } from 'pixi.js';
 import gsap from 'gsap';
 import { plainStyle } from '../util/fx.js';
 
-function bindPress(target, onClick) {
+export function bindPress(target, onClick) {
   target.eventMode = 'static';
   target.cursor = 'pointer';
   const to = (s) => gsap.to(target.scale, { x: s, y: s, duration: 0.12, ease: 'power2.out' });
@@ -134,4 +134,50 @@ export class SpinButton extends Container {
     this.halo.scale.set(pulse);
     this.halo.alpha = this.spinning ? 0.15 : 0.3 + Math.sin(this.time * 3) * 0.1;
   }
+}
+
+/** Botão redondo com ícone desenhado por `draw(graphics)`; chame `redraw()` quando o estado mudar. */
+export class IconButton extends Container {
+  constructor({ radius = 38, draw, onClick }) {
+    super();
+    this.draw = draw;
+    this.disc = new Graphics()
+      .circle(0, 0, radius)
+      .fill({ color: 0x0b3550, alpha: 0.9 })
+      .stroke({ color: 0xffd34d, width: 3 });
+    this.icon = new Graphics();
+    this.icon.scale.set(radius / 38);
+    this.addChild(this.disc, this.icon);
+    bindPress(this, onClick);
+    this.redraw();
+  }
+
+  redraw() {
+    this.icon.clear();
+    this.draw(this.icon);
+  }
+}
+
+/** Ícone de alto-falante (raio ~38). */
+export function drawSpeaker(g, muted) {
+  g.poly([-16, -8, -6, -8, 6, -18, 6, 18, -6, 8, -16, 8]).fill(0xffffff);
+  if (muted) {
+    g.moveTo(12, -9).lineTo(28, 9).moveTo(28, -9).lineTo(12, 9).stroke({ color: 0xff6b6b, width: 4, cap: 'round' });
+  } else {
+    g.arc(8, 0, 10, -0.9, 0.9).stroke({ color: 0xffffff, width: 3.5, cap: 'round' });
+    g.arc(8, 0, 18, -0.9, 0.9).stroke({ color: 0xffffff, width: 3.5, cap: 'round' });
+  }
+}
+
+/** Ícone de engrenagem (raio ~38). */
+export function drawGear(g) {
+  const teeth = 8;
+  const pts = [];
+  for (let i = 0; i < teeth * 4; i++) {
+    const a = (i / (teeth * 4)) * Math.PI * 2;
+    const r = i % 4 < 2 ? 21 : 15;
+    pts.push(Math.cos(a) * r, Math.sin(a) * r);
+  }
+  g.poly(pts).fill(0xffffff);
+  g.circle(0, 0, 7).fill(0x0b3550);
 }

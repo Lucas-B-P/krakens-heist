@@ -28,6 +28,10 @@ export class Wallet {
     if (amount > 0) this.#set(this.#balance + amount);
   }
 
+  reset(amount) {
+    this.#set(amount);
+  }
+
   #set(value) {
     this.#balance = Math.round(value * 100) / 100;
     localStorage.setItem(STORAGE_KEY, String(this.#balance));
